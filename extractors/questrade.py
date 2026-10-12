@@ -6,7 +6,7 @@ Uses the official Questrade REST API (OAuth2 with refresh tokens).
 SETUP (one-time, ~5 minutes):
   1. Log into Questrade at questrade.com
   2. Go to: My Account > Security > Apps > Authorize a Personal App
-     (Direct link: https://login.questrade.com/APIhub)
+     (Direct link: https://apphub.questrade.com/UI/UserApps.aspx)
   3. Copy the refresh token shown
   4. Create the credentials file:
        ~/.config/portfolio_pipeline/questrade_credentials.json
@@ -19,7 +19,7 @@ TOKEN LIFECYCLE:
     the new token back to questrade_credentials.json so you don't have
     to manually update it.
   - Access tokens expire after 30 minutes (handled transparently).
-  - If authentication fails, re-generate a token at the APIhub link above.
+  - If authentication fails, re-generate a token at the API hub link above.
 
 API REFERENCE:
   https://www.questrade.com/api/documentation
@@ -71,7 +71,7 @@ class QuestiontradeAuth:
         if resp.status_code == 400:
             raise ValueError(
                 "Questrade refresh token rejected (400). "
-                "Generate a new token at https://login.questrade.com/APIhub "
+                "Generate a new token at https://apphub.questrade.com/UI/UserApps.aspx "
                 f"and update 'refresh_token' in {CREDENTIALS_FILE}."
             )
         resp.raise_for_status()

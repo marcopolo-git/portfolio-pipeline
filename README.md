@@ -32,7 +32,7 @@ Then fill in each file:
 
 | File | How to get it |
 |---|---|
-| `questrade_credentials.json` | Questrade > My Account > Security > Apps > Authorize a Personal App ([APIhub](https://login.questrade.com/APIhub)). Paste the refresh token. The pipeline rotates and saves new tokens automatically. |
+| `questrade_credentials.json` | Questrade > My Account > Security > Apps > Authorize a Personal App ([API hub](https://apphub.questrade.com/UI/UserApps.aspx)). Paste the refresh token. The pipeline rotates and saves new tokens automatically. |
 | `google_credentials.json` | Google Cloud Console > create a service account > Keys > Add key > JSON. Replace the template with the downloaded file, and share your Google Sheet with the service account's `client_email` (Editor). |
 | `sheets_config.json` | The sheet ID from your Google Sheet URL: `docs.google.com/spreadsheets/d/<spreadsheet_id>/edit` |
 
