@@ -1,2 +1,5 @@
 pandas==2.2.3
 requests==2.32.3
+google-api-python-client==2.193.0
+google-auth==2.49.1
+yfinance==1.2.0
