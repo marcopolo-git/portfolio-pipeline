@@ -19,7 +19,9 @@ What IS updated (existing WS / QT rows only):
 What is NOT touched:
     - All other columns (formulas, Asset Class, Region, Tags, etc.)
     - Non-WS and non-QT rows (private equity, crypto, Computershare, etc.)
-    - WS cash positions (not included in the Wealthsimple holdings export)
+
+Cash (WS CURRENCY rows and QT balances, both as CASH-<currency>) is matched to
+sheet rows with a blank Ticker by (Account, Currency).
 """
 
 import json
@@ -188,6 +190,10 @@ def load_pipeline_data() -> pd.DataFrame:
     ws_slim["exchange"] = ws_slim["exchange"].map(
         lambda x: WS_EXCHANGE_MAP.get(str(x).strip(), str(x).strip()) if pd.notna(x) else None
     )
+    # WS exports cash as security_type CURRENCY with the bare currency as its symbol (e.g. 'CAD').
+    # Rename to 'CASH-CAD' so it is matched to sheet cash rows the same way QT cash is.
+    is_cash = ws["security_type"].eq("CURRENCY")
+    ws_slim.loc[is_cash, "symbol"] = "CASH-" + ws_slim.loc[is_cash, "currency"].str.upper()
     ws_slim["norm_symbol"] = ws_slim["symbol"].apply(lambda s: extract_exchange_and_ticker(s)[1])
 
     # QT has no exchange column — infer exchange from the ticker symbol (e.g. VVSG.TO → TSX).
