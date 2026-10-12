@@ -1,0 +1,27 @@
+# Credentials — never commit these
+.env
+*.token
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Data files — raw exports contain personal financial data
+data/raw/
+data/processed/
+
+# macOS
+.DS_Store
+
+# Spreadsheets and Office lock files — may contain personal financial data
+*.xlsx
+*.xls
+~$*
+
+# Claude Code local (per-machine) settings
+.claude/settings.local.json
