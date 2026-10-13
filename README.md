@@ -56,3 +56,31 @@ Drop them in the project root or `data/raw/wealthsimple/`. `pipeline.py` moves t
 ```
 
 Raw and processed data (`data/`) are git-ignored because they contain personal financial data.
+
+## How the sheet update works
+
+`portfolio_updater.py` only writes the **Import Date** and **Quantity** columns of Wealthsimple
+(`WS - …`) and Questrade (`QT - …`) rows. Everything else in the sheet is left alone.
+
+- **Existing holdings** are matched by ticker, account and exchange, and updated.
+- **New holdings** are appended at the bottom with the other columns blank, for you to fill in.
+- **Sold holdings** (no longer reported by the broker) get Quantity `0`. The row is kept, not deleted.
+- **Cash** is matched to rows with a blank Ticker by account and currency.
+- **Unknown exchanges** are written as the broker reports them, and a missing exchange is left
+  blank, so new cases are easy to spot in the sheet.
+
+## ⚠️ Manually maintained holdings
+
+Some holdings can't be kept in sync automatically because of Google Finance issues (ticker or
+exchange mismatches). They are listed in `MANUAL_HOLDINGS` at the top of
+[`portfolio_updater.py`](portfolio_updater.py), and the script **never updates, appends or zeroes
+them**. Keep their Quantity up to date by hand in the sheet.
+
+| Ticker | Account | Why |
+|---|---|---|
+| `BIP` / `BIP.UN` | WS - TFSA | Wealthsimple reports `BIP.UN`, the sheet uses `BIP` |
+| `GLDM` | WS - RRSP | Wealthsimple reports `NYSE`, the sheet uses `NYSEARCA` |
+| `VTI` | WS - RRSP | Wealthsimple reports `NYSE`, the sheet uses `NYSEARCA` |
+
+To add or remove one, edit the list as `(ticker, account)` pairs. If the broker and the sheet use
+different tickers, list both, as for BIP. Keep this table in sync with the list.

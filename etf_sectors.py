@@ -63,6 +63,7 @@ EXCHANGE_TO_YF_SUFFIX: dict = {
     "NASDAQ":   "",
     "NYSE":     "",
     "NYSEARCA": "",
+    "ARCA":     "",
     "BATS":     "",
 }
 
@@ -76,6 +77,7 @@ EXCHANGE_TO_GF_PREFIX: dict = {
     "NASDAQ":   "NASDAQ",
     "NYSE":     "NYSE",
     "NYSEARCA": "NYSEARCA",
+    "ARCA":     "NYSEARCA",
     "BATS":     "BATS",
 }
 
