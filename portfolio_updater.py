@@ -16,6 +16,9 @@ What IS updated (existing WS / QT rows only):
     - Column C  Import Date
     - Column D  Quantity
 
+Holdings the broker no longer reports (fully sold) get Quantity 0 instead of
+keeping their last quantity. See build_sold_updates() for the safeguards.
+
 What is NOT touched:
     - All other columns (formulas, Asset Class, Region, Tags, etc.)
     - Non-WS and non-QT rows (private equity, crypto, Computershare, etc.)
@@ -25,6 +28,7 @@ sheet rows with a blank Ticker by (Account, Currency).
 """
 
 import json
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 import pandas as pd
@@ -38,10 +42,21 @@ CONFIG_DIR       = Path.home() / ".config" / "portfolio_pipeline"
 GOOGLE_CREDS     = CONFIG_DIR / "google_credentials.json"
 SHEETS_CONFIG    = CONFIG_DIR / "sheets_config.json"
 SHEETS_API_SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
+SHEETS_EPOCH     = date(1899, 12, 30)   # day 0 of Google Sheets date serial numbers
 
 # Pipeline account_type value → Portfolio sheet Account label
 WS_ACCOUNT_MAP = {"FHSA": "WS - FHSA", "RRSP": "WS - RRSP", "TFSA": "WS - TFSA"}
 QT_ACCOUNT_MAP = {"TFSA": "QT - TFSA"}
+
+# Holdings maintained by hand in the sheet (ticker, account) — never updated, appended
+# or zeroed. Use the ticker as the broker reports it AND as it appears in the sheet if
+# they differ. Kept manually because of Google Finance issues; see README.
+MANUAL_HOLDINGS = {
+    ("BIP",    "WS - TFSA"),   # sheet ticker
+    ("BIP.UN", "WS - TFSA"),   # Wealthsimple ticker
+    ("GLDM",   "WS - RRSP"),   # WS reports NYSE, sheet uses NYSEARCA
+    ("VTI",    "WS - RRSP"),   # WS reports NYSE, sheet uses NYSEARCA
+}
 
 # Normalise Wealthsimple exchange names to Google Finance exchange codes.
 # Google Finance uses TSE for the Toronto Stock Exchange and CVE for TSX Venture.
@@ -50,6 +65,7 @@ WS_EXCHANGE_MAP = {
     "TSX-V":        "CVE",
     "NYSE":         "NYSE",
     "NYSE ARCA":    "NYSEARCA",
+    "ARCA":         "NYSEARCA",
     "NASDAQ":       "NASDAQ",
     "BATS":         "BATS",
     "CBOE CANADA":  "TSE",   # CBOE Canada equities trade on TSX infrastructure
@@ -61,11 +77,13 @@ EXCHANGE_ALIASES = {
     "TSX":      "TSE",
     "TSE":      "TSE",
     "TSX-V":    "CVE",
+    "TSXV":     "CVE",
     "VENTURE":  "CVE",
     "CVE":      "CVE",
     "NYSE":     "NYSE",
     "NASDAQ":   "NASDAQ",
     "NYSEARCA": "NYSEARCA",
+    "ARCA":     "NYSEARCA",
     "BATS":     "BATS",
 }
 
@@ -86,7 +104,8 @@ def extract_exchange_and_ticker(raw) -> tuple:
         'NASDAQ:MSFT' → ('NASDAQ', 'MSFT')
         'VVSG.TO'     → ('TSE', 'VVSG')
         'GPV.V'       → ('CVE', 'GPV')
-        'MSFT'        → ('NASDAQ', 'MSFT')  (default to US exchange)
+        'ARCA:GLDM'   → ('NYSEARCA', 'GLDM')
+        'MSFT'        → (None, 'MSFT')      (exchange unknown — left blank)
         None / ''     → (None, None)
 
     Exchange values are always returned as Google Finance codes (TSE, CVE, …).
@@ -113,12 +132,9 @@ def extract_exchange_and_ticker(raw) -> tuple:
             t = t[: -len(suffix)]
             break
 
-    # Default to NASDAQ for US tickers if no exchange found
-    if not exchange:
-        exchange = "NASDAQ"
-
-    # Normalise any alias (e.g. TSX → TSE) that may have come from a prefix
-    exchange = normalize_exchange(exchange) or exchange
+    # Normalise any alias (e.g. TSX → TSE) that may have come from a prefix.
+    # No prefix or suffix → exchange stays None (blank); it is not guessed.
+    exchange = normalize_exchange(exchange)
 
     norm_ticker = t.upper() or None
     return exchange, norm_ticker
@@ -196,12 +212,17 @@ def load_pipeline_data() -> pd.DataFrame:
     ws_slim.loc[is_cash, "symbol"] = "CASH-" + ws_slim.loc[is_cash, "currency"].str.upper()
     ws_slim["norm_symbol"] = ws_slim["symbol"].apply(lambda s: extract_exchange_and_ticker(s)[1])
 
-    # QT has no exchange column — infer exchange from the ticker symbol (e.g. VVSG.TO → TSX).
+    # QT exchange comes from the API's listingExchange (e.g. ARCA → NYSEARCA, TSX → TSE).
+    # Unmapped codes pass through unchanged so new ones show up in the sheet; if the CSV
+    # has no listing exchange, fall back to the ticker suffix (e.g. VVSG.TO → TSE), else blank.
     qt["currency"] = qt["symbol"].apply(infer_qt_currency)
     qt_slim = qt[["symbol", "quantity", "import_date", "portfolio_account", "currency"]].copy()
     qt_slim[["exchange", "norm_symbol"]] = qt_slim["symbol"].apply(
         lambda s: pd.Series(extract_exchange_and_ticker(s))
     )
+    if "listing_exchange" in qt.columns:
+        listed = qt["listing_exchange"].map(lambda x: normalize_exchange(x) if pd.notna(x) else None)
+        qt_slim["exchange"] = listed.where(listed.notna(), qt_slim["exchange"])
 
     combined = pd.concat([ws_slim, qt_slim], ignore_index=True)
     combined = combined.dropna(subset=["portfolio_account"])
@@ -294,19 +315,25 @@ def build_batch_updates(pipeline_df: pd.DataFrame,
 
     Matching strategy (in order):
       1. Direct match by (normalized_ticker, account, exchange)
-      2. Fallback: scan sheet rows for normalized ticker + account + exchange match
+      2. Fallback: scan sheet rows for normalized ticker + account + exchange match.
+         A blank exchange on either side means "unknown" and matches any exchange
+         (e.g. QT positions, which carry no exchange, match a sheet row set to NASDAQ).
     """
-    batch_data = []
-    new_rows   = []
+    batch_data   = []
+    new_rows     = []
+    matched_rows = set()
 
     for _, row in pipeline_df.iterrows():
         symbol   = str(row["symbol"])
         norm     = row["norm_symbol"]
-        exchange = row["exchange"]
+        exchange = row["exchange"] if pd.notna(row["exchange"]) else None
         account  = row["portfolio_account"]
         quantity = float(row["quantity"])
         date_str = str(row["import_date"])
         currency = str(row["currency"]).upper() if pd.notna(row.get("currency")) else ""
+
+        if (norm, account) in MANUAL_HOLDINGS:
+            continue
 
         if symbol.startswith("CASH-"):
             row_num = cash_lookup.get((account, currency))
@@ -324,17 +351,85 @@ def build_batch_updates(pipeline_df: pd.DataFrame,
                 raw_sheet_ex = sheet_exchange if sheet_exchange else extract_exchange_and_ticker(sheet_ticker)[0]
                 sheet_ex = normalize_exchange(raw_sheet_ex) or raw_sheet_ex
 
-                if sheet_norm == norm and sheet_account.strip() == account and sheet_ex == exchange:
+                exchange_ok = not exchange or not sheet_ex or sheet_ex == exchange
+                if sheet_norm == norm and sheet_account.strip() == account and exchange_ok:
                     row_num = i
                     break
 
         if row_num:
             range_str = f"{_cell(row_num, cols['Import Date'])}:{_cell(row_num, cols['Quantity'])}"
             batch_data.append({"range": range_str, "values": [[date_str, quantity]]})
+            matched_rows.add(row_num)
         else:
             new_rows.append(row.to_dict())
 
-    return batch_data, new_rows
+    return batch_data, new_rows, matched_rows
+
+
+def _as_date(value) -> Optional[date]:
+    """Unformatted sheet date (serial number, or 'YYYY-MM-DD' text) → date; None if unreadable."""
+    if isinstance(value, (int, float)):
+        return SHEETS_EPOCH + timedelta(days=int(value))
+    try:
+        return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def build_sold_updates(pipeline_df: pd.DataFrame, matched_rows: set,
+                       raw_values: list, cols: dict) -> tuple:
+    """
+    Find WS / QT security rows the brokers no longer report (fully sold) and set
+    their Quantity to 0. Brokers drop sold positions instead of reporting 0, so
+    without this those rows keep their last quantity forever.
+
+    raw_values must be read with UNFORMATTED_VALUE / SERIAL_NUMBER so Quantity and
+    Import Date come back as numbers rather than locale-formatted text.
+
+    A row is zeroed only when all of these hold:
+      - its Account has data in this run with a valid import date (other accounts,
+        or data without a date, are never touched)
+      - the row's Import Date is readable and no newer than that data, so a stale
+        CSV (e.g. a failed Questrade refresh) can't zero a newer holding, and a row
+        whose date can't be read is left alone rather than guessed at
+      - it has a Ticker (cash rows are left alone)
+      - it wasn't matched, and its ticker isn't held in that account at all
+        (so an exchange mismatch never zeroes a holding you still own)
+      - its Quantity isn't already 0 or blank
+      - it isn't in MANUAL_HOLDINGS
+
+    Returns (batch_data, sold) where sold is a list of (ticker, account, old_qty).
+    """
+    # Latest import date per account; accounts whose data has no valid date are skipped
+    account_dates = {}
+    for acct, value in pipeline_df.groupby("portfolio_account")["import_date"].max().items():
+        if pd.notna(value) and _as_date(value):
+            account_dates[acct] = str(value)
+    held = set(zip(pipeline_df["norm_symbol"], pipeline_df["portfolio_account"]))
+
+    batch_data = []
+    sold       = []
+    for i, row in enumerate(raw_values[1:], start=2):
+        if i in matched_rows:
+            continue
+        account = str(_sheet_val(row, cols["Account"])).strip()
+        ticker  = str(_sheet_val(row, cols["Ticker"])).strip()
+        qty     = _sheet_val(row, cols["Quantity"])
+        if account not in account_dates or not ticker or qty in ("", 0):
+            continue
+        norm = extract_exchange_and_ticker(ticker)[1]
+        if (norm, account) in held or (norm, account) in MANUAL_HOLDINGS:
+            continue
+        data_date = str(account_dates[account])
+        row_date  = _as_date(_sheet_val(row, cols["Import Date"]))
+        if row_date is None or row_date > _as_date(data_date):
+            continue
+
+        range_str = f"{_cell(i, cols['Import Date'])}:{_cell(i, cols['Quantity'])}"
+        batch_data.append({"range": range_str, "values": [[data_date, 0]]})
+        sold.append((ticker, account, qty))
+
+    return batch_data, sold
 
 
 def build_append_rows(new_rows: list, num_cols: int, cols: dict) -> list:
@@ -411,7 +506,17 @@ def main_sheets():
 
     # ── Build updates ────────────────────────────────────────────────────────
     print("[portfolio] Matching and updating…")
-    batch_data, new_rows = build_batch_updates(pipeline_df, security_lookup, cash_lookup, all_values, cols)
+    batch_data, new_rows, matched_rows = build_batch_updates(
+        pipeline_df, security_lookup, cash_lookup, all_values, cols
+    )
+
+    # Re-read unformatted so Quantity / Import Date are numbers, not locale text
+    raw_values = values_api.get(
+        spreadsheetId=spreadsheet_id, range=sheet_range,
+        valueRenderOption="UNFORMATTED_VALUE", dateTimeRenderOption="SERIAL_NUMBER",
+    ).execute().get("values", [])
+    sold_data, sold = build_sold_updates(pipeline_df, matched_rows, raw_values, cols)
+    batch_data += sold_data
 
     if batch_data:
         # Prepend sheet name to ranges so the API knows which sheet to update
@@ -428,6 +533,11 @@ def main_sheets():
             print(f"    {entry['range']:<10}  {entry['values'][0][0]}")
     else:
         print("\n  No existing rows to update.")
+
+    if sold:
+        print(f"\n  Zeroed {len(sold)} sold holding(s) no longer reported by the broker:")
+        for ticker, acct, old_qty in sold:
+            print(f"    {ticker:<20}  {acct:<12}  {old_qty} → 0")
 
     if new_rows:
         append_rows = build_append_rows(new_rows, num_cols, cols)

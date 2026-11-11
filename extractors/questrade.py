@@ -154,6 +154,13 @@ class QuestiontradeClient:
         """Return balance summary for an account."""
         return self._get(f"accounts/{account_id}/balances")
 
+    def get_symbols(self, symbol_ids: List[int]) -> list[dict]:
+        """Return symbol details (incl. listingExchange) for the given symbol IDs."""
+        if not symbol_ids:
+            return []
+        ids = ",".join(str(i) for i in symbol_ids)
+        return self._get("symbols", params={"ids": ids})["symbols"]
+
     def get_activities(
         self,
         account_id: str,
@@ -238,7 +245,19 @@ def extract_positions(client: QuestiontradeClient, accounts: List[dict]) -> pd.D
                 "realized_pnl": 0.0,
                 "currency": currency,
                 "under_reorg": False,
+                "listing_exchange": None,
             })
+
+    # Positions don't include the exchange — look it up per symbol (e.g. 'ARCA', 'NASDAQ', 'TSX').
+    # The exchange is optional, so a failed lookup must not lose the positions already fetched.
+    symbol_ids = sorted({pos["symbolId"] for pos in rows if pos.get("symbolId")})
+    try:
+        listing = {s["symbolId"]: s.get("listingExchange") for s in client.get_symbols(symbol_ids)}
+    except (requests.RequestException, KeyError, ValueError) as e:
+        print(f"[questrade] WARNING — exchange lookup failed, exchanges left blank: {e}")
+        listing = {}
+    for pos in rows:
+        pos["listingExchange"] = listing.get(pos.get("symbolId"))
 
     if not rows and not cash_rows:
         print("[questrade] No positions found.")
@@ -262,6 +281,7 @@ def extract_positions(client: QuestiontradeClient, accounts: List[dict]) -> pd.D
         "closedPnl": "realized_pnl",
         "currency": "currency",
         "isUnderReorg": "under_reorg",
+        "listingExchange": "listing_exchange",
     }
     available = {k: v for k, v in rename.items() if k in df.columns}
     df = df[list(available.keys())].rename(columns=available)
