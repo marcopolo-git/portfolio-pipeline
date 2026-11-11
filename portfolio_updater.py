@@ -387,9 +387,11 @@ def build_sold_updates(pipeline_df: pd.DataFrame, matched_rows: set,
     Import Date come back as numbers rather than locale-formatted text.
 
     A row is zeroed only when all of these hold:
-      - its Account has data in this run (other accounts are never touched)
-      - that data is at least as recent as the row's Import Date, so a stale CSV
-        (e.g. a failed Questrade refresh) can't zero a newer holding
+      - its Account has data in this run with a valid import date (other accounts,
+        or data without a date, are never touched)
+      - the row's Import Date is readable and no newer than that data, so a stale
+        CSV (e.g. a failed Questrade refresh) can't zero a newer holding, and a row
+        whose date can't be read is left alone rather than guessed at
       - it has a Ticker (cash rows are left alone)
       - it wasn't matched, and its ticker isn't held in that account at all
         (so an exchange mismatch never zeroes a holding you still own)
@@ -398,7 +400,11 @@ def build_sold_updates(pipeline_df: pd.DataFrame, matched_rows: set,
 
     Returns (batch_data, sold) where sold is a list of (ticker, account, old_qty).
     """
-    account_dates = pipeline_df.groupby("portfolio_account")["import_date"].max().to_dict()
+    # Latest import date per account; accounts whose data has no valid date are skipped
+    account_dates = {}
+    for acct, value in pipeline_df.groupby("portfolio_account")["import_date"].max().items():
+        if pd.notna(value) and _as_date(value):
+            account_dates[acct] = str(value)
     held = set(zip(pipeline_df["norm_symbol"], pipeline_df["portfolio_account"]))
 
     batch_data = []
@@ -416,7 +422,7 @@ def build_sold_updates(pipeline_df: pd.DataFrame, matched_rows: set,
             continue
         data_date = str(account_dates[account])
         row_date  = _as_date(_sheet_val(row, cols["Import Date"]))
-        if row_date and row_date > date.fromisoformat(data_date):
+        if row_date is None or row_date > _as_date(data_date):
             continue
 
         range_str = f"{_cell(i, cols['Import Date'])}:{_cell(i, cols['Quantity'])}"

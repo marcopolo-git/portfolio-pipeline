@@ -249,8 +249,13 @@ def extract_positions(client: QuestiontradeClient, accounts: List[dict]) -> pd.D
             })
 
     # Positions don't include the exchange — look it up per symbol (e.g. 'ARCA', 'NASDAQ', 'TSX').
+    # The exchange is optional, so a failed lookup must not lose the positions already fetched.
     symbol_ids = sorted({pos["symbolId"] for pos in rows if pos.get("symbolId")})
-    listing = {s["symbolId"]: s.get("listingExchange") for s in client.get_symbols(symbol_ids)}
+    try:
+        listing = {s["symbolId"]: s.get("listingExchange") for s in client.get_symbols(symbol_ids)}
+    except (requests.RequestException, KeyError, ValueError) as e:
+        print(f"[questrade] WARNING — exchange lookup failed, exchanges left blank: {e}")
+        listing = {}
     for pos in rows:
         pos["listingExchange"] = listing.get(pos.get("symbolId"))
 
