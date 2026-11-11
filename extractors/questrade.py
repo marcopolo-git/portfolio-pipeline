@@ -161,28 +161,6 @@ class QuestiontradeClient:
         ids = ",".join(str(i) for i in symbol_ids)
         return self._get("symbols", params={"ids": ids})["symbols"]
 
-    def get_activities(
-        self,
-        account_id: str,
-        start_date: str,
-        end_date: str,
-    ) -> list[dict]:
-        """
-        Return activities for an account within a date range.
-
-        Parameters
-        ----------
-        start_date, end_date : str
-            ISO 8601 dates, e.g. "2024-01-01" (time defaults to midnight UTC).
-            Questrade limits each request to a 30-day window.
-        """
-        # Questrade requires RFC 3339 timestamps
-        start = f"{start_date}T00:00:00-00:00"
-        end = f"{end_date}T00:00:00-00:00"
-        return self._get(
-            f"accounts/{account_id}/activities",
-            params={"startTime": start, "endTime": end},
-        ).get("activities", [])
 
 
 # ---------------------------------------------------------------------------
@@ -190,25 +168,6 @@ class QuestiontradeClient:
 # ---------------------------------------------------------------------------
 
 import pandas as pd
-from datetime import timedelta
-
-
-def _date_windows(start: str, end: str, window_days: int = 28) -> list[tuple[str, str]]:
-    """
-    Split [start, end] into chunks of at most window_days days.
-
-    Questrade's activity endpoint rejects windows > 30 days.
-    Using 28 days provides a safety margin.
-    """
-    fmt = "%Y-%m-%d"
-    cur = datetime.strptime(start, fmt)
-    stop = datetime.strptime(end, fmt)
-    windows = []
-    while cur < stop:
-        chunk_end = min(cur + timedelta(days=window_days), stop)
-        windows.append((cur.strftime(fmt), chunk_end.strftime(fmt)))
-        cur = chunk_end
-    return windows
 
 
 def extract_positions(client: QuestiontradeClient, accounts: List[dict]) -> pd.DataFrame:
@@ -297,74 +256,6 @@ def extract_positions(client: QuestiontradeClient, accounts: List[dict]) -> pd.D
     return df
 
 
-def extract_activities(
-    client: QuestiontradeClient,
-    accounts: list[dict],
-    start_date: str,
-    end_date: str,
-) -> pd.DataFrame:
-    """
-    Fetch all activities for all accounts within the date range.
-
-    Automatically paginates in 28-day windows to respect the API limit.
-    """
-    all_rows = []
-    windows = _date_windows(start_date, end_date)
-    print(f"[questrade] Fetching activities: {start_date} to {end_date} in {len(windows)} window(s)")
-
-    for acct in accounts:
-        acct_id = acct["number"]
-        for win_start, win_end in windows:
-            rows = client.get_activities(acct_id, win_start, win_end)
-            for row in rows:
-                row["account_number"] = acct_id
-                row["account_type"] = acct["type"]
-            all_rows.extend(rows)
-
-    if not all_rows:
-        print("[questrade] No activities found in date range.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(all_rows)
-
-    # Rename camelCase API fields to snake_case
-    rename = {
-        "account_number": "account_number",
-        "account_type": "account_type",
-        "tradeDate": "transaction_date",
-        "settlementDate": "settlement_date",
-        "action": "action",
-        "type": "activity_type",
-        "symbol": "symbol",
-        "symbolId": "symbol_id",
-        "description": "name",
-        "currency": "currency",
-        "quantity": "quantity",
-        "price": "unit_price",
-        "grossAmount": "gross_amount",
-        "commission": "commission",
-        "netAmount": "net_cash_amount",
-    }
-    available = {k: v for k, v in rename.items() if k in df.columns}
-    df = df[list(available.keys())].rename(columns=available)
-
-    # Parse dates
-    for col in ["transaction_date", "settlement_date"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True).dt.date
-
-    # Remove duplicate rows that can appear at window boundaries
-    df = df.drop_duplicates()
-
-    df["import_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-    print(
-        f"[questrade] Activities: {len(df)} rows | "
-        f"date range: {df['transaction_date'].min()} to {df['transaction_date'].max()}"
-    )
-    return df
-
-
 def save(df: pd.DataFrame, filename: str) -> Path:
     """Write a DataFrame to the processed directory as CSV."""
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -374,24 +265,15 @@ def save(df: pd.DataFrame, filename: str) -> Path:
     return out
 
 
-def run(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
+def run() -> Dict:
     """
-    Full Questrade extraction pass.
-
-    Parameters
-    ----------
-    start_date : str, optional
-        Start of activity history in YYYY-MM-DD format. Defaults to 2020-01-01.
-    end_date : str, optional
-        End date. Defaults to today.
+    Full Questrade extraction pass: positions and cash balances for all accounts,
+    saved to data/processed/qt_positions.csv.
 
     Returns
     -------
-    dict with keys 'positions' and 'activities' (DataFrames).
+    dict with key 'positions' (DataFrame).
     """
-    start_date = start_date or "2020-01-01"
-    end_date = end_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
     auth = QuestiontradeAuth()
     client = QuestiontradeClient(auth)
 
@@ -404,19 +286,10 @@ def run(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dic
     (RAW_DIR / "accounts.json").write_text(json.dumps(accounts, indent=2))
 
     positions = extract_positions(client, accounts)
-    activities = extract_activities(client, accounts, start_date, end_date)
-
     save(positions, "qt_positions.csv")
-    save(activities, "qt_activities.csv")
 
-    return {"positions": positions, "activities": activities}
+    return {"positions": positions}
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    kwargs = {}
-    if len(args) >= 1:
-        kwargs["start_date"] = args[0]
-    if len(args) >= 2:
-        kwargs["end_date"] = args[1]
-    run(**kwargs)
+    run()
