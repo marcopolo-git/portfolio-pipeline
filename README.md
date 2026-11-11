@@ -45,7 +45,8 @@ Wealthsimple has no public API. Export the CSVs from the web app:
 - Activities: Activity > Download
 - Holdings: Portfolio > Holdings report
 
-Drop them in the project root or `data/raw/wealthsimple/`. `pipeline.py` moves them into place.
+Save them in `data/raw/wealthsimple/`, and only there: that folder is git-ignored, so your
+exports can never be committed by accident. Don't drop them in the project root.
 
 ## Usage
 
