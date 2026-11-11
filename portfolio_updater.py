@@ -13,8 +13,9 @@ the bottom with Ticker, Import Date, Quantity, Currency, and Account
 pre-filled. All other columns are left blank for manual entry.
 
 What IS updated (existing WS / QT rows only):
-    - Column C  Import Date
-    - Column D  Quantity
+    - Import Date
+    - Quantity
+  (columns are found by their header name, so their position in the sheet doesn't matter)
 
 Holdings the broker no longer reports (fully sold) get Quantity 0 instead of
 keeping their last quantity. See build_sold_updates() for the safeguards.

@@ -14,6 +14,8 @@ venv/
 # Data files — raw exports contain personal financial data
 data/raw/
 data/processed/
+# Wealthsimple exports dropped in the project root
+WS_*.csv
 
 # macOS
 .DS_Store

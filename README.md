@@ -25,9 +25,10 @@ Credentials live outside the repo, in `~/.config/portfolio_pipeline/`. Templates
 
 ```bash
 mkdir -p ~/.config/portfolio_pipeline
-cp config.example/*.json ~/.config/portfolio_pipeline/
+cp -n config.example/*.json ~/.config/portfolio_pipeline/
 ```
 
+`-n` skips files that already exist, so re-running it never overwrites your real credentials.
 Then fill in each file:
 
 | File | How to get it |
@@ -35,6 +36,7 @@ Then fill in each file:
 | `questrade_credentials.json` | Questrade > My Account > Security > Apps > Authorize a Personal App ([API hub](https://apphub.questrade.com/UI/UserApps.aspx)). Paste the refresh token. The pipeline rotates and saves new tokens automatically. |
 | `google_credentials.json` | Google Cloud Console > create a service account > Keys > Add key > JSON. Replace the template with the downloaded file, and share your Google Sheet with the service account's `client_email` (Editor). |
 | `sheets_config.json` | The sheet ID from your Google Sheet URL: `docs.google.com/spreadsheets/d/<spreadsheet_id>/edit` |
+| `manual_holdings.json` | Optional. Holdings you maintain by hand; see "Manually maintained holdings" below. Replace or empty (`[]`) the placeholder entries. |
 
 ### 3. Wealthsimple exports
 
@@ -51,8 +53,10 @@ Drop them in the project root or `data/raw/wealthsimple/`. `pipeline.py` moves t
 .venv/bin/python pipeline.py              # Wealthsimple + Questrade
 .venv/bin/python pipeline.py --ws-only    # Wealthsimple only (no credentials needed)
 .venv/bin/python pipeline.py --qt-only    # Questrade only
+.venv/bin/python pipeline.py --start 2023-01-01 --end 2024-12-31   # Limit Questrade activity history
 .venv/bin/python portfolio_updater.py     # Push to the Portfolio sheet
-.venv/bin/python etf_sectors.py           # Refresh ETF sector weightings
+.venv/bin/python etf_sectors.py           # Refresh ETF sector weightings (rows flagged in the ETF column)
+.venv/bin/python etf_sectors.py QQQ XEQT  # ...or only the tickers given
 ```
 
 Raw and processed data (`data/`) are git-ignored because they contain personal financial data.
@@ -62,12 +66,17 @@ Raw and processed data (`data/`) are git-ignored because they contain personal f
 `portfolio_updater.py` only writes the **Import Date** and **Quantity** columns of Wealthsimple
 (`WS - …`) and Questrade (`QT - …`) rows. Everything else in the sheet is left alone.
 
-- **Existing holdings** are matched by ticker, account and exchange, and updated.
+- **Existing holdings** are matched by ticker, account and exchange, and updated. A blank
+  exchange on either side matches any exchange.
 - **New holdings** are appended at the bottom with the other columns blank, for you to fill in.
-- **Sold holdings** (no longer reported by the broker) get Quantity `0`. The row is kept, not deleted.
+- **Sold holdings** (no longer reported by the broker) get Quantity `0`. The row is kept, not
+  deleted. This only happens for accounts the broker reported in this run, and only when the
+  row's Import Date is readable and not newer than that data, so stale or failed exports never
+  zero a holding.
 - **Cash** is matched to rows with a blank Ticker by account and currency.
-- **Unknown exchanges** are written as the broker reports them, and a missing exchange is left
-  blank, so new cases are easy to spot in the sheet.
+- **Exchanges** come from the Wealthsimple export and from Questrade's listing exchange (e.g.
+  Questrade `ARCA` → `NYSEARCA`, `TSX` → `TSE`). Unknown exchanges are written as the broker
+  reports them, and a missing exchange is left blank, so new cases are easy to spot in the sheet.
 
 ## ⚠️ Manually maintained holdings
 
