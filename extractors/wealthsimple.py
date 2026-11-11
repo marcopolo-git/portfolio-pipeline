@@ -3,11 +3,10 @@ Wealthsimple CSV ingestion extractor.
 
 Wealthsimple does not provide an official API for retail investors.
 The most reliable extraction method is a manual CSV export from the web app:
-  - Holdings:   App > Portfolio > Holdings report (top-right icon) — required
-  - Activities: App > Activity > Download (top-right icon) — optional
+  - Holdings: App > Portfolio > Holdings report (top-right icon)
 
-Place the exported files in data/raw/wealthsimple/ and run this module.
-Files are matched by prefix: WS_holdings-*.csv and WS_activities-*.csv.
+Place the exported file in data/raw/wealthsimple/ and run this module.
+Files are matched by prefix: WS_holdings-*.csv (the most recent one is used).
 """
 
 import re
@@ -146,55 +145,6 @@ def extract_holdings(path: Optional[Path] = None) -> pd.DataFrame:
     return df
 
 
-def extract_activities(path: Optional[Path] = None) -> pd.DataFrame:
-    """
-    Ingest a Wealthsimple activities export CSV.
-
-    Returns a normalized DataFrame with typed values.
-    Columns: transaction_date, settlement_date, account_id, account_type,
-             activity_type, activity_sub_type, direction, symbol, name,
-             currency, quantity, unit_price, commission, net_cash_amount
-    """
-    path = path or _latest_file("WS_activities-*.csv")
-    print(f"[wealthsimple] Reading activities from: {path.name}")
-
-    df = _read_csv_strip_footer(path)
-
-    # Normalize column names
-    df.columns = (
-        df.columns.str.strip()
-        .str.lower()
-        .str.replace(r"[\s\(\)/]+", "_", regex=True)
-        .str.replace(r"_+$", "", regex=True)
-    )
-
-    # Strip stray quotes from string columns (activities file uses unquoted values,
-    # but guard against format changes)
-    str_cols = df.select_dtypes(include="object").columns
-    df[str_cols] = df[str_cols].apply(lambda s: s.str.strip('"').str.strip())
-
-    # Date columns
-    for col in ["transaction_date", "settlement_date"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce").dt.date
-
-    # Numeric columns
-    numeric_cols = ["quantity", "unit_price", "commission", "net_cash_amount"]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Import date from filename, e.g. WS_activities-export-2026-04-03.csv → 2026-04-03
-    match = re.search(r"\d{4}-\d{2}-\d{2}", path.name)
-    df["import_date"] = match.group() if match else None
-
-    print(
-        f"[wealthsimple] Activities: {len(df)} rows | "
-        f"date range: {df['transaction_date'].min()} to {df['transaction_date'].max()}"
-    )
-    return df
-
-
 def save(df: pd.DataFrame, filename: str) -> Path:
     """Write a DataFrame to the processed directory as CSV."""
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -204,40 +154,19 @@ def save(df: pd.DataFrame, filename: str) -> Path:
     return out
 
 
-def run(holdings_path: Optional[Path] = None, activities_path: Optional[Path] = None) -> dict:
+def run(holdings_path: Optional[Path] = None) -> dict:
     """
-    Full Wealthsimple ingestion pass.
-
-    Reads the latest exported CSVs, normalizes them, and writes clean files
-    to data/processed/. Returns a dict with both DataFrames for further use.
-
-    Only the holdings export is required (it's what the sheet is built from).
-    The activities export is optional: if none is found, activities are skipped
-    and "activities" is None.
+    Full Wealthsimple ingestion pass: reads the latest holdings export,
+    normalizes it, and writes data/processed/ws_holdings.csv.
+    Returns a dict with the holdings DataFrame.
     """
     holdings = extract_holdings(holdings_path)
     save(holdings, "ws_holdings.csv")
-
-    try:
-        activities = extract_activities(activities_path)
-    except FileNotFoundError:
-        if activities_path:          # an explicitly given file must exist
-            raise
-        print("[wealthsimple] No activities export found — skipped (optional; not used by the sheet).")
-        activities = None
-    else:
-        save(activities, "ws_activities.csv")
-
-    return {"holdings": holdings, "activities": activities}
+    return {"holdings": holdings}
 
 
 if __name__ == "__main__":
-    # Allow passing file paths as CLI arguments for one-off runs:
-    #   python -m extractors.wealthsimple path/to/holdings.csv path/to/activities.csv
+    # Allow passing the file path as a CLI argument for one-off runs:
+    #   python -m extractors.wealthsimple path/to/holdings.csv
     args = sys.argv[1:]
-    kwargs = {}
-    if len(args) >= 1:
-        kwargs["holdings_path"] = Path(args[0])
-    if len(args) >= 2:
-        kwargs["activities_path"] = Path(args[1])
-    run(**kwargs)
+    run(holdings_path=Path(args[0]) if args else None)

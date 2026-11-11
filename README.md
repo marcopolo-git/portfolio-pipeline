@@ -1,6 +1,6 @@
 # portfolio-pipeline
 
-Pulls holdings and activities from Wealthsimple (CSV exports) and Questrade (REST API),
+Pulls holdings from Wealthsimple (CSV exports) and Questrade (REST API),
 normalises them into CSVs, and syncs them to a Google Sheet.
 
 | Script | What it does |
@@ -85,14 +85,12 @@ Run these steps whenever you want fresh numbers in the sheet.
 
 ### 1. Export from Wealthsimple
 
-Wealthsimple has no public API. Export the CSVs from the web app:
+Wealthsimple has no public API. Export a fresh holdings report from the web app each time:
+Portfolio > Holdings report.
 
-- Holdings: Portfolio > Holdings report (required; export a fresh one every time)
-- Activities: Activity > Download (optional; saved as a transaction history, not used by the sheet)
-
-Save them in `data/raw/wealthsimple/`, and only there: that folder is git-ignored, so your
-exports can never be committed by accident. Don't drop them in the project root. The newest
-export of each kind is used; older ones can stay.
+Save it in `data/raw/wealthsimple/`, and only there: that folder is git-ignored, so your
+exports can never be committed by accident. Don't drop it in the project root. The newest
+export is used; older ones can stay.
 
 Questrade needs no export: its data is fetched from the API.
 
@@ -124,7 +122,6 @@ Writes an `ETF Sectors` tab; it's created on the first run.
 ```bash
 .venv/bin/python pipeline.py --ws-only    # Wealthsimple only (no Questrade credentials needed)
 .venv/bin/python pipeline.py --qt-only    # Questrade only
-.venv/bin/python pipeline.py --start 2023-01-01 --end 2024-12-31   # limit Questrade activity history
 ```
 
 Raw and processed data (`data/`) are git-ignored because they contain personal financial data.

@@ -11,9 +11,6 @@ Run only Wealthsimple ingestion (no API credentials needed):
 
 Run only Questrade extraction:
     python pipeline.py --qt-only
-
-Limit Questrade activity history:
-    python pipeline.py --start 2023-01-01 --end 2024-12-31
 """
 
 import argparse
@@ -34,11 +31,10 @@ def move_ws_exports_to_raw():
     raw_ws.mkdir(parents=True, exist_ok=True)
 
     moved = []
-    for pattern in ("WS_activities-*.csv", "WS_holdings-*.csv"):
-        for f in root.glob(pattern):
-            dest = raw_ws / f.name
-            f.rename(dest)
-            moved.append(f"{f.name} → data/raw/wealthsimple/")
+    for f in root.glob("WS_holdings-*.csv"):
+        dest = raw_ws / f.name
+        f.rename(dest)
+        moved.append(f"{f.name} → data/raw/wealthsimple/")
 
     if moved:
         print("[pipeline] Moved Wealthsimple exports to raw directory:")
@@ -52,10 +48,10 @@ def run_wealthsimple():
     return run()
 
 
-def run_questrade(start_date: str, end_date: str):
+def run_questrade():
     from extractors.questrade import run
     print("\n── Questrade ─────────────────────────────────────────────")
-    return run(start_date=start_date, end_date=end_date)
+    return run()
 
 
 def main():
@@ -63,12 +59,6 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--ws-only", action="store_true", help="Run only Wealthsimple ingestion")
     group.add_argument("--qt-only", action="store_true", help="Run only Questrade extraction")
-    parser.add_argument("--start", default="2020-01-01", help="Activity history start date (YYYY-MM-DD)")
-    parser.add_argument(
-        "--end",
-        default=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        help="Activity history end date (YYYY-MM-DD)",
-    )
     args = parser.parse_args()
 
     print("=" * 58)
@@ -89,7 +79,7 @@ def main():
 
     if not args.ws_only:
         try:
-            results["questrade"] = run_questrade(args.start, args.end)
+            results["questrade"] = run_questrade()
         except EnvironmentError as e:
             print(f"\n[questrade] SKIPPED — {e}")
         except Exception as e:
