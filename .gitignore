@@ -25,3 +25,6 @@ data/processed/
 
 # Claude Code local (per-machine) settings
 .claude/settings.local.json
+
+# Personal editor files
+*.code-workspace
