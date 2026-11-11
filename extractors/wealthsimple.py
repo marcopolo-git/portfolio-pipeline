@@ -3,11 +3,11 @@ Wealthsimple CSV ingestion extractor.
 
 Wealthsimple does not provide an official API for retail investors.
 The most reliable extraction method is a manual CSV export from the web app:
-  - Activities: App > Activity > Download (top-right icon)
-  - Holdings:   App > Portfolio > Holdings report (top-right icon)
+  - Holdings:   App > Portfolio > Holdings report (top-right icon) — required
+  - Activities: App > Activity > Download (top-right icon) — optional
 
 Place the exported files in data/raw/wealthsimple/ and run this module.
-Files are matched by prefix: WS_activities-*.csv and WS_holdings-*.csv.
+Files are matched by prefix: WS_holdings-*.csv and WS_activities-*.csv.
 """
 
 import re
@@ -210,12 +210,23 @@ def run(holdings_path: Optional[Path] = None, activities_path: Optional[Path] = 
 
     Reads the latest exported CSVs, normalizes them, and writes clean files
     to data/processed/. Returns a dict with both DataFrames for further use.
+
+    Only the holdings export is required (it's what the sheet is built from).
+    The activities export is optional: if none is found, activities are skipped
+    and "activities" is None.
     """
     holdings = extract_holdings(holdings_path)
-    activities = extract_activities(activities_path)
-
     save(holdings, "ws_holdings.csv")
-    save(activities, "ws_activities.csv")
+
+    try:
+        activities = extract_activities(activities_path)
+    except FileNotFoundError:
+        if activities_path:          # an explicitly given file must exist
+            raise
+        print("[wealthsimple] No activities export found — skipped (optional; not used by the sheet).")
+        activities = None
+    else:
+        save(activities, "ws_activities.csv")
 
     return {"holdings": holdings, "activities": activities}
 
