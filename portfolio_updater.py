@@ -10,7 +10,8 @@ Requires:
 
 New holdings found in the pipeline but not yet in the sheet are appended at
 the bottom with Ticker, Import Date, Quantity, Currency, and Account
-pre-filled. All other columns are left blank for manual entry.
+pre-filled, and the formula columns (Name, Price, Market Value, …) filled in
+from sheet_template.py. The manual columns are left blank for you.
 
 What IS updated (existing WS / QT rows only):
     - Import Date
@@ -29,10 +30,13 @@ sheet rows with a blank Ticker by (Account, Currency).
 """
 
 import json
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 import pandas as pd
+
+from sheet_template import PARAMETERS_TAB, number_format_requests, row_formulas
 
 
 # ── Configuration ──────────────────────────────────────────────────────────────
@@ -464,6 +468,22 @@ def build_append_rows(new_rows: list, num_cols: int, cols: dict) -> list:
     return rows
 
 
+def build_formula_updates(new_rows: list, first_row: int, cols: dict, locale: str,
+                          has_parameters: bool) -> list:
+    """
+    Formula cells for rows just appended at first_row, first_row+1, …, as
+    {"range": "C12", "values": [[formula]]} entries. Formulas come from
+    sheet_template.py; columns the sheet doesn't have are skipped.
+    """
+    data = []
+    for offset, row in enumerate(new_rows):
+        row_num = first_row + offset
+        cash    = str(row["symbol"]).startswith("CASH-")
+        for name, value in row_formulas(row_num, cols, cash, locale, has_parameters).items():
+            data.append({"range": _cell(row_num, cols[name]), "values": [[value]]})
+    return data
+
+
 # ── Main (Google Sheets mode) ──────────────────────────────────────────────────
 
 def main_sheets():
@@ -550,13 +570,52 @@ def main_sheets():
 
     if new_rows:
         append_rows = build_append_rows(new_rows, num_cols, cols)
-        values_api.append(
+        appended = values_api.append(
             spreadsheetId=spreadsheet_id,
             range=f"'{SHEET_NAME}'!A1",
             valueInputOption="USER_ENTERED",
             insertDataOption="INSERT_ROWS",
             body={"values": append_rows},
         ).execute()
+
+        # Fill the formula columns (Name, Price, Market Value, …) of the new rows.
+        # Row numbers are only known after the append, so this is a second write.
+        meta = service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id, fields="properties.locale,sheets.properties(title,sheetId)"
+        ).execute()
+        locale         = meta["properties"].get("locale", "en_US")
+        tabs           = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta["sheets"]}
+        has_parameters = PARAMETERS_TAB in tabs
+        first_row = int(re.search(r"!\$?[A-Z]+\$?(\d+)", appended["updates"]["updatedRange"]).group(1))
+        last_row  = first_row + len(new_rows) - 1
+        formula_data = build_formula_updates(new_rows, first_row, cols, locale, has_parameters)
+        if formula_data:
+            values_api.batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"valueInputOption": "USER_ENTERED", "data": [
+                    {**entry, "range": f"'{SHEET_NAME}'!{entry['range']}"} for entry in formula_data
+                ]},
+            ).execute()
+
+        # Number formats: rows added to a Sheets table get only their column type's
+        # default format, so copy the formats of the row above (matching the rest of
+        # the sheet), or use the template's formats when there is no data row above.
+        sheet_id = tabs[SHEET_NAME]
+        if first_row > 2:
+            format_requests = [{"copyPaste": {
+                "source":      {"sheetId": sheet_id, "startRowIndex": first_row - 2, "endRowIndex": first_row - 1,
+                                "startColumnIndex": 0, "endColumnIndex": num_cols},
+                "destination": {"sheetId": sheet_id, "startRowIndex": first_row - 1, "endRowIndex": last_row,
+                                "startColumnIndex": 0, "endColumnIndex": num_cols},
+                "pasteType": "PASTE_FORMAT",
+            }}]
+        else:
+            format_requests = number_format_requests(sheet_id, cols, first_row, last_row)
+        if format_requests:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id, body={"requests": format_requests}
+            ).execute()
+
         print(f"\n  Appended {len(append_rows)} new holding(s):")
         for row in new_rows:
             sym  = row["norm_symbol"] or row["symbol"]

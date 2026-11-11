@@ -6,8 +6,11 @@ normalises them into CSVs, and syncs them to a Google Sheet.
 | Script | What it does |
 |---|---|
 | `pipeline.py` | Ingests Wealthsimple CSVs and Questrade API data into `data/processed/` |
+| `setup_sheet.py` | Builds the `Portfolio` and `Parameters` tabs in a blank Google Sheet (run once) |
 | `portfolio_updater.py` | Updates the `Portfolio` sheet with the latest quantities and adds new holdings |
 | `etf_sectors.py` | Fetches ETF sector weightings (yfinance) into an `ETF Sectors` sheet |
+
+The sheet's columns, formats and formulas are defined in [`sheet_template.py`](sheet_template.py).
 
 ## Setup
 
@@ -48,6 +51,26 @@ Wealthsimple has no public API. Export the CSVs from the web app:
 Save them in `data/raw/wealthsimple/`, and only there: that folder is git-ignored, so your
 exports can never be committed by accident. Don't drop them in the project root.
 
+### 4. Google Sheet
+
+1. Create a blank Google Sheet.
+2. Share it with the service account's `client_email` (from `google_credentials.json`) as
+   **Editor**, and put its ID in `sheets_config.json`.
+3. Build the tabs:
+
+   ```bash
+   .venv/bin/python setup_sheet.py
+   ```
+
+This creates a **Portfolio** tab (a `Portfolio` table with all columns, formats and volatility
+colour scales) and a **Parameters** tab (the history window used by the `Param.` columns).
+It only works on a sheet without those tabs and never overwrites anything.
+
+Then run the pipeline and the updater (see Usage): each holding is added as a row with its
+formulas filled in (name, price, CAD value, weight, volatility, beta, drawdowns). Fill in the
+manual columns (ETF, Liquidity, Asset Class, Region, Tags, Notes) yourself. Formulas adapt to
+the sheet's locale, e.g. `;` separators for French.
+
 ## Usage
 
 ```bash
@@ -64,12 +87,14 @@ Raw and processed data (`data/`) are git-ignored because they contain personal f
 
 ## How the sheet update works
 
-`portfolio_updater.py` only writes the **Import Date** and **Quantity** columns of Wealthsimple
+For existing rows, `portfolio_updater.py` only writes the **Import Date** and **Quantity** columns of Wealthsimple
 (`WS - …`) and Questrade (`QT - …`) rows. Everything else in the sheet is left alone.
 
 - **Existing holdings** are matched by ticker, account and exchange, and updated. A blank
   exchange on either side matches any exchange.
-- **New holdings** are appended at the bottom with the other columns blank, for you to fill in.
+- **New holdings** are appended at the bottom with their formula columns filled in (from
+  `sheet_template.py`) and the number formats of the row above. Manual columns are left blank
+  for you to fill in.
 - **Sold holdings** (no longer reported by the broker) get Quantity `0`. The row is kept, not
   deleted. This only happens for accounts the broker reported in this run, and only when the
   row's Import Date is readable and not newer than that data, so stale or failed exports never
