@@ -1,0 +1,4 @@
+[
+  {"ticker": "XYZ",    "account": "WS - TFSA", "note": "sheet ticker"},
+  {"ticker": "XYZ.UN", "account": "WS - TFSA", "note": "broker ticker"}
+]

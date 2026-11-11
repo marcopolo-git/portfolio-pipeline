@@ -72,15 +72,24 @@ Raw and processed data (`data/`) are git-ignored because they contain personal f
 ## ⚠️ Manually maintained holdings
 
 Some holdings can't be kept in sync automatically because of Google Finance issues (ticker or
-exchange mismatches). They are listed in `MANUAL_HOLDINGS` at the top of
-[`portfolio_updater.py`](portfolio_updater.py), and the script **never updates, appends or zeroes
-them**. Keep their Quantity up to date by hand in the sheet.
+exchange mismatches). List them in `~/.config/portfolio_pipeline/manual_holdings.json`, and the
+script **never updates, appends or zeroes them**. Keep their Quantity up to date by hand in the
+sheet.
 
-| Ticker | Account | Why |
-|---|---|---|
-| `BIP` / `BIP.UN` | WS - TFSA | Wealthsimple reports `BIP.UN`, the sheet uses `BIP` |
-| `GLDM` | WS - RRSP | Wealthsimple reports `NYSE`, the sheet uses `NYSEARCA` |
-| `VTI` | WS - RRSP | Wealthsimple reports `NYSE`, the sheet uses `NYSEARCA` |
+The file lives outside the repo, like your credentials, because it reveals what you hold. Start
+from the template:
 
-To add or remove one, edit the list as `(ticker, account)` pairs. If the broker and the sheet use
-different tickers, list both, as for BIP. Keep this table in sync with the list.
+```bash
+cp config.example/manual_holdings.json ~/.config/portfolio_pipeline/
+```
+
+```json
+[
+  {"ticker": "XYZ",    "account": "WS - TFSA", "note": "sheet ticker"},
+  {"ticker": "XYZ.UN", "account": "WS - TFSA", "note": "broker ticker"}
+]
+```
+
+- `ticker` and `account` must match the sheet's Ticker and Account columns. `note` is for you.
+- If the broker and the sheet use different tickers (e.g. `XYZ.UN` vs `XYZ`), list both.
+- If the file doesn't exist, no holdings are treated as manual.

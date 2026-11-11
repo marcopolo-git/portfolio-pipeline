@@ -41,6 +41,7 @@ SHEET_NAME       = "Portfolio"
 CONFIG_DIR       = Path.home() / ".config" / "portfolio_pipeline"
 GOOGLE_CREDS     = CONFIG_DIR / "google_credentials.json"
 SHEETS_CONFIG    = CONFIG_DIR / "sheets_config.json"
+MANUAL_HOLDINGS_FILE = CONFIG_DIR / "manual_holdings.json"
 SHEETS_API_SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 SHEETS_EPOCH     = date(1899, 12, 30)   # day 0 of Google Sheets date serial numbers
 
@@ -48,15 +49,22 @@ SHEETS_EPOCH     = date(1899, 12, 30)   # day 0 of Google Sheets date serial num
 WS_ACCOUNT_MAP = {"FHSA": "WS - FHSA", "RRSP": "WS - RRSP", "TFSA": "WS - TFSA"}
 QT_ACCOUNT_MAP = {"TFSA": "QT - TFSA"}
 
-# Holdings maintained by hand in the sheet (ticker, account) — never updated, appended
-# or zeroed. Use the ticker as the broker reports it AND as it appears in the sheet if
-# they differ. Kept manually because of Google Finance issues; see README.
-MANUAL_HOLDINGS = {
-    ("BIP",    "WS - TFSA"),   # sheet ticker
-    ("BIP.UN", "WS - TFSA"),   # Wealthsimple ticker
-    ("GLDM",   "WS - RRSP"),   # WS reports NYSE, sheet uses NYSEARCA
-    ("VTI",    "WS - RRSP"),   # WS reports NYSE, sheet uses NYSEARCA
-}
+
+def load_manual_holdings() -> set:
+    """
+    Holdings maintained by hand in the sheet — never updated, appended or zeroed.
+    Read from MANUAL_HOLDINGS_FILE (kept outside the repo because it reveals what
+    you hold), a JSON list of {"ticker": …, "account": …, "note": …} entries.
+    Returns a set of (TICKER, account) pairs; empty if the file doesn't exist.
+    """
+    if not MANUAL_HOLDINGS_FILE.exists():
+        return set()
+    with open(MANUAL_HOLDINGS_FILE) as f:
+        entries = json.load(f)
+    return {(str(e["ticker"]).strip().upper(), str(e["account"]).strip()) for e in entries}
+
+
+MANUAL_HOLDINGS = load_manual_holdings()
 
 # Normalise Wealthsimple exchange names to Google Finance exchange codes.
 # Google Finance uses TSE for the Toronto Stock Exchange and CVE for TSX Venture.
@@ -104,7 +112,7 @@ def extract_exchange_and_ticker(raw) -> tuple:
         'NASDAQ:MSFT' → ('NASDAQ', 'MSFT')
         'VVSG.TO'     → ('TSE', 'VVSG')
         'GPV.V'       → ('CVE', 'GPV')
-        'ARCA:GLDM'   → ('NYSEARCA', 'GLDM')
+        'ARCA:SPY'    → ('NYSEARCA', 'SPY')
         'MSFT'        → (None, 'MSFT')      (exchange unknown — left blank)
         None / ''     → (None, None)
 
