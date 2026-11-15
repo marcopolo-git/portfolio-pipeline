@@ -219,6 +219,10 @@ def load_pipeline_data() -> pd.DataFrame:
     ws_slim["exchange"] = ws_slim["exchange"].map(
         lambda x: WS_EXCHANGE_MAP.get(str(x).strip(), str(x).strip()) if pd.notna(x) else None
     )
+    # WS reports NYSE Arca-listed ETFs as plain "NYSE"; Google Finance lists
+    # them under NYSEARCA. US ETFs on the NYSE group trade on Arca, so remap them.
+    is_nyse_etf = ws["security_type"].eq("EXCHANGE_TRADED_FUND") & ws_slim["exchange"].eq("NYSE")
+    ws_slim.loc[is_nyse_etf, "exchange"] = "NYSEARCA"
     # WS exports cash as security_type CURRENCY with the bare currency as its symbol (e.g. 'CAD').
     # Rename to 'CASH-CAD' so it is matched to sheet cash rows the same way QT cash is.
     is_cash = ws["security_type"].eq("CURRENCY")
